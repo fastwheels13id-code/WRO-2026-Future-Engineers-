@@ -1,3 +1,4 @@
+#Section in English
 # WRO-2026-Future-Engineers-Fast Wheels ID
 
 # Autonomous Vehicle Engineering Documentation
@@ -91,3 +92,102 @@ Both software profiles are compiled and flashed utilizing the official Arduino I
 We would like to express our deepest gratitude to our institution, advisors, and peers who supported us throughout this engineering journey. Special thanks to our team members for their dedication during long debugging sessions, calibrating sensors, and refining the structural code of this vehicle. 
 
 We also extend our sincere appreciation to the organizers of this international competition for providing an exceptional platform that challenges students to push the boundaries of embedded hardware programming, electronics, and autonomous mobile robotics. This project stands as a testament to teamwork, technical perseverance, and practical engineering.
+
+# Sección Español
+
+# WRO-2026-Future-Engineers-Fast Wheels ID
+
+# Documentación de Ingeniería del Vehículo Autónomo
+
+## 1. Introducción y Filosofía de Ingeniería
+
+Este proyecto presenta el desarrollo de un vehículo robótico autónomo diseñado para navegar en un entorno estructurado, rastrear trayectorias específicas y evitar obstáculos de forma dinámica. En lugar de depender de procesadores de alto consumo en el borde (*edge-computing*), computadoras monoplaca costosas o dependencias en la nube, nuestra filosofía de ingeniería se centró en la eficiencia estructural: construir un sistema embebido distribuido capaz de realizar percepción en tiempo real y respuesta electromecánica inmediata. 
+
+Para lograr esto, desacoplamos la arquitectura en dos nodos de procesamiento de hardware dedicados. Un módulo de cámara especializado maneja el procesamiento matricial de alta velocidad, el filtrado a nivel de bits y la visión por computadora; mientras que un microcontrolador central robusto gobierna la orquestación mecánica, la actuación del *shield* de hardware y los bucles de comportamiento dinámico. Al aislar la percepción de la locomoción, alcanzamos una alta estabilidad operativa, minimizamos la latencia de procesamiento y garantizamos que las interrupciones de seguridad se ejecuten con precisión de milisegundos mediante lógica de hardware local. Este enfoque demuestra que se pueden lograr comportamientos autónomos complejos de manera eficiente en microcontroladores mediante un diseño de firmware optimizado y una gestión estricta de recursos.
+
+---
+
+## 2. Arquitectura del Sistema e Integración de Componentes
+
+Nuestro sistema se diseñó en torno a una disposición de controlador dual, dividiendo la percepción y la ejecución física en dos capas de firmware distintas que interactúan sin problemas mediante comunicación serie asíncrona continua:
+
+*   **Controlador de Percepción (ESP32-CAM):** Funciona como el núcleo visual del vehículo. Gestiona la adquisición de búfer de fotogramas a alta velocidad a través del sensor de cámara integrado OV2640 y coordina su LED de estado para señales de sincronización e iluminación flash localizada.
+*   **Controlador Central y de Locomoción (Keyestudio Arduino R3):** Funciona como el cerebro principal. Procesa los datos de carga útil en tiempo real enviados por el sistema de visión y coordina los actuadores del vehículo a través de un ecosistema de hardware dedicado:
+    *   **Keyestudio K0435 Motor Shield:** Montado directamente sobre el Arduino R3 para manejar la regulación de corriente, protegiendo las compuertas lógicas del microcontrolador mientras entrega energía directa a los motores mediante controladores de puente H integrados.
+    *   **Servomotor de Alto Torque MG996R:** Conectado directamente al *shield* K0435 para accionar la geometría de dirección delantera, asegurando ángulos de giro precisos y manteniendo la alineación de la dirección bajo estrés mecánico.
+    *   **Motor DC de Tracción:** Impulsado por los bloques de terminales del *shield* para gobernar la rampa de velocidad, el cambio de dirección y el frenado electrónico instantáneo mediante modulación por ancho de pulsos (PWM).
+    *   **2x Sensores Ultrasónicos HC-SR04:** Configurados a través de pines de entrada/salida digital para mapear el perímetro físico inmediato, identificando paredes o peligros inesperados en la ruta mediante cálculos de tiempo de vuelo de ondas ultrasónicas.
+    *   **Subsistema de Alimentación y Regulación:** Alimentado por un banco de baterías de alta descarga compuesto por celdas recargables de iones de litio 18650 (3.7V cada una), aisladas y estabilizadas a través de un módulo de fuente de alimentación HW-131 para evitar caídas de voltaje durante los picos de consumo de los motores.
+
+---
+
+## 3. Cómo Funciona: Algoritmos y Marco de Toma de Decisiones
+
+### Flujo de Visión por Computadora (Segmentación de Color)
+El ESP32-CAM implementa un algoritmo de visión por computadora cíclico y no bloqueante, diseñado para aislar rutas de color específicas dentro del espacio de color HSV (Tono, Saturación, Valor). El flujo paso a paso opera a través de las siguientes etapas:
+
+1.  **Inicialización del Sistema:** Establece los parámetros de depuración serie a una alta velocidad de baudios y configura los registros del sensor de la cámara utilizando una resolución base en formato CIF (400 x 296 píxeles), instanciada mediante `const int CAM_WIDTH = 400;` y `const int CAM_HEIGHT = 296;`. Bloquea propiedades específicas del sensor, incluyendo el balance de blancos, el control de ganancia y los límites de exposición para garantizar la consistencia visual.
+2.  **Adquisición de Fotogramas:** Dentro del bucle principal de ejecución, el firmware consulta el componente del sensor OV2640 solicitando una nueva matriz de imagen. El sensor devuelve un flujo JPEG comprimido para optimizar las transferencias DMA internas.
+3.  **Descompresión y Traducción de Color:** Dado que un flujo JPEG comprimido no se puede analizar píxel por píxel, el algoritmo utiliza una librería de descompresión interna para traducir el flujo a un arreglo mapa de bits RGB565 sin comprimir, otorgando acceso directo a nivel de bits al canal de color de cada coordenada.
+4.  **Escaneo de Optimización por Rejilla:** Para evitar caídas severas de fotogramas y minimizar la latencia de procesamiento del bucle, el algoritmo analiza la matriz de píxeles mediante bucles anidados (los bucles externos controlan las filas en el eje Y; los internos, las columnas en el eje X). En lugar de analizar los 118,400 píxeles, implementa una constante de optimización (`PIXEL_STEP = 2`), evaluando efectivamente uno de cada dos píxeles para mantener una excelente velocidad de procesamiento conservando la precisión estructural.
+5.  **Extracción de Bits y Transformación a HSV:** Para cada píxel muestreado, se extraen las intensidades individuales de profundidad de bits de Rojo, Verde y Azul de la estructura RGB565 de 16 bits. Estas variables se transforman matemáticamente al espacio de color HSV. Convertir los datos a Tono (*Hue*), Saturación (*Saturation*) y Valor (*Value*) desacopla el tipo de color real de su componente de brillo. Esto garantiza que el seguimiento de color permanezca altamente inmune a sombras ambientales, reflejos en la pista o cambios de iluminación en el recinto.
+6.  **Mitigación Dinámica de Ruido:** Antes de evaluar la identidad de color de un píxel, el firmware pasa las métricas HSV a través de un filtro de validación estricto. Los píxeles que caen por debajo de un umbral mínimo de saturación (tonos lavados o grises) o por debajo de un límite mínimo de valor (sombras profundas y regiones oscuras) se descartan inmediatamente como ruido visual.
+7.  **Perfilado y Clasificación de Color:** Los píxeles que superan el filtro de ruido comparan su ángulo exacto de Tono (*Hue*) con límites angulares precisos preprogramados. Estos límites definen el espectro exacto para los marcadores de nuestra pista objetivo, incluyendo los márgenes de Rojo, Verde y Magenta.
+8.  **Acumulación de Datos Espaciales:** Cuando un píxel coincide exitosamente con un perfil de color, el sistema incrementa un contador de densidad dedicado para ese color específico. Simultáneamente, suma la coordenada absoluta X y la coordenada Y de ese píxel a variables de sumatoria destinadas al análisis espacial.
+9.  **Validación de Umbral:** Una vez que concluye el recorrido de la matriz, el sistema evalúa los contadores de densidad acumulados. Si el número total de píxeles detectados para un color específico no supera un umbral mínimo de validación (`threshold`), todo el clúster se descarta como artefacto de ruido de fondo, evitando falsos positivos.
+10. **Cálculo de Centroide y Mapeo de Zonas Horizontales:** Para cualquier clúster de color que supere la validación, el sistema calcula su centro geométrico exacto. El centro espacial se calcula dividiendo la suma de las coordenadas X entre el total de píxeles válidos, y la suma de las coordenadas Y entre la misma cantidad total:
+
+    $$\text{Centro X} = \frac{\text{Suma de coordenadas X}}{\text{Total de píxeles válidos}}$$
+
+    $$\text{Centro Y} = \frac{\text{Suma de coordenadas Y}}{\text{Total de píxeles válidos}}$$
+
+    El plano de escaneo horizontal de 400 píxeles de ancho se divide estructuralmente en tres sectores virtuales distintos: Izquierda, Centro y Derecha. Al evaluar en qué sector cae el valor del Centro X, el vehículo conoce exactamente dónde se ubica el marcador de color con respecto a su chasis, transmitiendo este *token* de inmediato a través de la interfaz serie.
+11. **Liberación de Memoria y Ejecución Reciclada:** Para evitar la fragmentación crítica de la memoria *heap* o desbordamientos en el microchip, el búfer de fotogramas activo se limpia por completo y la memoria asignada se libera. El flujo vuelve al inicio sin problemas para capturar el siguiente fotograma entrante en tiempo real.
+
+### Control de Locomoción (El Marco de las 3 Preguntas)
+Simultáneamente, el Keyestudio Arduino R3 procesa las cadenas de rastreo entrantes por puerto serie junto con los datos de los sensores locales mediante un ciclo de ejecución de alta velocidad conocido como el **Marco de las Tres Preguntas**:
+
+*   **Pregunta 1: "¿Cuál es el estado actual de mis sensores?"**
+    El vehículo muestrea su telemetría ambiental continuamente desde múltiples vectores operativos. El vector visual proporciona *tokens* de color transmitidos desde el ESP32-CAM a través del búfer serie, mientras que el vector espacial calcula las métricas de distancia a las paredes laterales pulsando los dos sensores ultrasónicos HC-SR04.
+*   **Pregunta 2: "¿Existe un peligro o desviación en la ruta?"**
+    El controlador evalúa las métricas entrantes contra los umbrales de seguridad. En operación estándar, la detección de un color de pista gris combinado con distancias ultrasónicas despejadas confirma el libre paso. Sin embargo, si la cadena visual indica un marcador de límite prohibido (como un *token* Rojo sólido), o si los sensores ultrasónicos detectan que la distancia a una pared cae por debajo de nuestro margen crítico de seguridad, se activa una bandera de interrupción de alta prioridad.
+*   **Pregunta 3: "¿Qué acción debo tomar?"**
+    Dependiendo de la bandera de estado, el firmware emite comandos al *shield* de motores K0435:
+    *   *Rama de Ruta Despejada:* El motor DC de tracción mantiene una velocidad constante hacia adelante a través de una salida PWM estable, y el servo de dirección MG996R ajusta dinámicamente su ángulo de centrado para mantener el vehículo alineado con el camino.
+    *   *Rama de Peligro/Obstáculo Detectado:* El vehículo ejecuta inmediatamente un protocolo de evasión embebido. El *shield* K0435 corta la corriente al motor DC para frenar al instante. El servo de dirección gira a su ángulo máximo de deflexión segura en dirección opuesta al obstáculo. La polaridad del motor DC se invierte para retroceder de forma segura desde la línea límite, y el vehículo rodea el peligro antes de devolver el control a la rutina estándar de seguimiento de línea.
+
+---
+
+## 4. Trayectoria de Implementación: Cómo lo Construimos
+
+La realización de este vehículo siguió un riguroso proceso de ingeniería dividido en tres fases principales de desarrollo:
+
+*   **Fase 1: Gestión de Potencia y Calibración Mecánica:** Comenzamos ensamblando el chasis físico y acoplando el *shield* de motores Keyestudio K0435 sobre el Arduino R3. La estabilización de la alimentación fue nuestro primer gran cuello de botella; las pruebas iniciales revelaron que cuando los motores DC arrancaban o cuando el servomotor MG996R ajustaba su dirección bajo carga, se generaban fuertes picos de voltaje inductivo. Estos picos causaban caídas de tensión (*brownouts*) y reinicios en el Arduino. Lo resolvimos integrando una tarjeta reguladora HW-131 con celdas de litio 18650 de alta descarga, separando efectivamente la línea de alimentación lógica de las cargas inductivas pesadas.
+*   **Fase 2: Optimización de Visión y Ajuste de Resolución:** Desarrollar la capa de percepción requirió balancear la precisión con las estrictas limitaciones de procesamiento. Los perfiles de imagen estándar causaban desbordamientos de memoria completos o pérdida de fotogramas en el chip ESP32-CAM. Superamos esta restricción implementando nuestra matriz de resolución CIF personalizada (400 x 296) y forzando un formato de conversión RGB565. La integración del bucle de optimización `PIXEL_STEP = 2` permitió que el módulo de la cámara realizara la transformación HSV completa, el filtrado de ruido y el mapeo de centroides con fluidez, manteniendo una alta tasa de fotogramas sin estrangulamiento térmico ni agotamiento de memoria *heap*.
+*   **Fase 3: Integración del Sistema y Pruebas Distribuidas:** La fase final se centró en sintonizar la comunicación y los sistemas de respuesta de comportamiento. Conectamos los pines de transmisión y recepción (TX/RX) de la tarjeta de la cámara al Arduino R3, implementando un protocolo de carga útil claro para transmitir los estados de seguimiento. Dedicamos horas a pruebas en pista para calibrar los umbrales de distancia exactos de los sensores ultrasónicos HC-SR04 y ajustar los topes mecánicos del servo de dirección. Esta extensa calibración garantizó que el vehículo ejecute maniobras de evasión suaves y confiables sin perder los límites de la pista ni colisionar con las paredes perimetrales.
+
+---
+
+## 5. Cómo Compilar y Cargar el Código
+
+Ambos perfiles de software se compilan y cargan utilizando el entorno de desarrollo oficial **Arduino IDE**:
+
+### Carga del Firmware (Percepción - ESP32-CAM)
+1. Abre el archivo de código de visión por computadora (`.ino`) en el Arduino IDE.
+2. Ve a **Herramientas > Placa** y selecciona **ESP32 Wrover Module**. Luego, configura **Herramientas > Esquema de Partición** en **Huge APP (3MB No OTA/1MB SPIFFS)** para asegurar que las librerías de visión compiladas quepan cómodamente en la memoria flash.
+3. Conecta el módulo de la cámara mediante un programador FTDI externo o su placa adaptadora dedicada, selecciona el puerto COM activo en **Herramientas > Puerto**, y conecta el pin `GPIO 0` a `GND` usando un cable puente (*jumper*) para desbloquear el modo de programación antes de presionar el botón de reinicio (*reset*).
+4. Haz clic en el ícono de la flecha de **Subir**. Una vez que el proceso alcance el `100%`, desconecta el cable puente del `GPIO 0` y reinicia el módulo para iniciar la ejecución.
+
+### Carga del Firmware (Locomoción - Keyestudio Arduino R3)
+1. Abre el archivo de código de control de movimiento (`.ino`) en el Arduino IDE.
+2. Ve a **Herramientas > Placa** y selecciona **Arduino Uno** (el perfil arquitectónico base requerido para la tarjeta Keyestudio R3).
+3. Conecta la tarjeta a tu computadora usando un cable USB Tipo B estándar. **Paso de Seguridad Crucial:** Asegúrate de que el interruptor de encendido externo de las baterías 18650 ubicado en el *shield* K0435 esté **APAGADO** durante la programación para evitar retornos de corriente peligrosos a tu computadora.
+4. Selecciona el puerto serie activo correspondiente en **Herramientas > Puerto**, haz clic en el ícono de la flecha de **Subir** y espera la confirmación. Una vez completado, desconecta el cable de programación y enciende la fuente de alimentación principal del circuito para el seguimiento autónomo.
+
+---
+
+## 6. Agradecimientos y Reflexiones Finales
+
+Queremos expresar nuestro más profundo agradecimiento a nuestra institución, asesores y compañeros que nos apoyaron a lo largo de este viaje de ingeniería. Un agradecimiento especial a los miembros de nuestro equipo por su dedicación durante las largas sesiones de depuración, calibrando sensores y refinando el código estructural de este vehículo.
+
+También extendemos nuestro sincero reconocimiento a los organizadores de esta competencia internacional por brindar una plataforma excepcional que desafía a los estudiantes a superar los límites de la programación de hardware embebido, la electrónica y la robótica móvil autónoma. Este proyecto se erige como un testimonio del trabajo en equipo, la perseverancia técnica y la ingeniería práctica.
